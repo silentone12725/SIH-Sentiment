@@ -104,23 +104,23 @@ class StakeholderCommentAnalyzer:
         """
         return """You are an expert legal and policy analyst specializing in corporate law and stakeholder consultation analysis. You are analyzing comments from stakeholders regarding proposed amendments to the Companies Act.
 
-Your task is to analyze stakeholder comments and provide comprehensive summaries that capture:
-1. Key themes and concerns raised by stakeholders
-2. Common patterns in feedback
-3. Specific issues with draft legislation sections
-4. Stakeholder priorities and recommendations
-5. Overall sentiment and tone
+                Your task is to analyze stakeholder comments and provide comprehensive summaries that capture:
+                1. Key themes and concerns raised by stakeholders
+                2. Common patterns in feedback
+                3. Specific issues with draft legislation sections
+                4. Stakeholder priorities and recommendations
+                5. Overall sentiment and tone
 
-Focus on:
-- Legal and regulatory concerns
-- Business impact assessments
-- Implementation challenges
-- Compliance requirements
-- MSME-specific issues
-- Corporate governance matters
-- Transparency and reporting requirements
+                Focus on:
+                - Legal and regulatory concerns
+                - Business impact assessments
+                - Implementation challenges
+                - Compliance requirements
+                - MSME-specific issues
+                - Corporate governance matters
+                - Transparency and reporting requirements
 
-Provide balanced, objective analysis that would help policymakers understand stakeholder perspectives."""
+                Provide balanced, objective analysis that would help policymakers understand stakeholder perspectives."""
 
     def generate_prompt_for_group(self, sentiment: str, comments: List[Dict], sample_size: int = 50) -> str:
         """
@@ -143,31 +143,31 @@ Provide balanced, objective analysis that would help policymakers understand sta
         ])
         
         prompt = f"""
-Analyze the following {sentiment.lower()} stakeholder comments about proposed Companies Act amendments. There are {len(comments)} total comments in this sentiment category, and I'm showing you {len(sample_comments)} representative samples.
+                    Analyze the following {sentiment.lower()} stakeholder comments about proposed Companies Act amendments. There are {len(comments)} total comments in this sentiment category, and I'm showing you {len(sample_comments)} representative samples.
 
-STAKEHOLDER COMMENTS ({sentiment.upper()} SENTIMENT):
-{comments_text}
+                    STAKEHOLDER COMMENTS ({sentiment.upper()} SENTIMENT):
+                    {comments_text}
 
-Please provide a comprehensive summary that includes:
+                    Please provide a comprehensive summary that includes:
 
-1. **Key Themes**: What are the main topics and concerns raised by these stakeholders?
+                    1. **Key Themes**: What are the main topics and concerns raised by these stakeholders?
 
-2. **Common Patterns**: What recurring issues or suggestions appear across multiple comments?
+                    2. **Common Patterns**: What recurring issues or suggestions appear across multiple comments?
 
-3. **Section-Specific Issues**: Which draft sections are generating the most feedback and why?
+                    3. **Section-Specific Issues**: Which draft sections are generating the most feedback and why?
 
-4. **Stakeholder Priorities**: What do these stakeholders seem to care about most?
+                    4. **Stakeholder Priorities**: What do these stakeholders seem to care about most?
 
-5. **Specific Recommendations**: What concrete changes or improvements are being suggested?
+                    5. **Specific Recommendations**: What concrete changes or improvements are being suggested?
 
-6. **Business Impact**: How do stakeholders view the potential impact on businesses, especially MSMEs?
+                    6. **Business Impact**: How do stakeholders view the potential impact on businesses, especially MSMEs?
 
-7. **Implementation Concerns**: What practical challenges are stakeholders highlighting?
+                    7. **Implementation Concerns**: What practical challenges are stakeholders highlighting?
 
-8. **Overall Sentiment Summary**: Provide a nuanced understanding of why these comments fall into the {sentiment.lower()} category.
+                    8. **Overall Sentiment Summary**: Provide a nuanced understanding of why these comments fall into the {sentiment.lower()} category.
 
-Format your response as a structured analysis that would help policymakers understand this group's perspective on the proposed legislation.
-"""
+                    Format your response as a structured analysis that would help policymakers understand this group's perspective on the proposed legislation.
+                    """
         return prompt
     
     def call_ollama_api(self, prompt: str, system_prompt: str = None) -> str:
@@ -257,46 +257,46 @@ Format your response as a structured analysis that would help policymakers under
         sentiment_counts = df['expected_sentiment'].value_counts().to_dict()
         
         overall_prompt = f"""
-Based on the analysis of {total_comments} stakeholder comments on proposed Companies Act amendments, provide an executive summary that synthesizes insights across all sentiment categories.
+        Based on the analysis of {total_comments} stakeholder comments on proposed Companies Act amendments, provide an executive summary that synthesizes insights across all sentiment categories.
 
-DATASET OVERVIEW:
-- Total Comments: {total_comments}
-- Draft Distribution: {draft_counts}
-- Section Distribution: {section_counts}
-- Sentiment Distribution: {sentiment_counts}
+        DATASET OVERVIEW:
+        - Total Comments: {total_comments}
+        - Draft Distribution: {draft_counts}
+        - Section Distribution: {section_counts}
+        - Sentiment Distribution: {sentiment_counts}
 
-SENTIMENT-SPECIFIC SUMMARIES:
+        SENTIMENT-SPECIFIC SUMMARIES:
 
-POSITIVE FEEDBACK:
-{sentiment_summaries.get('Positive', 'No positive comments analyzed')}
+        POSITIVE FEEDBACK:
+        {sentiment_summaries.get('Positive', 'No positive comments analyzed')}
 
-NEGATIVE FEEDBACK:
-{sentiment_summaries.get('Negative', 'No negative comments analyzed')}
+        NEGATIVE FEEDBACK:
+        {sentiment_summaries.get('Negative', 'No negative comments analyzed')}
 
-NEUTRAL FEEDBACK:
-{sentiment_summaries.get('Neutral', 'No neutral comments analyzed')}
+        NEUTRAL FEEDBACK:
+        {sentiment_summaries.get('Neutral', 'No neutral comments analyzed')}
 
-MIXED FEEDBACK:
-{sentiment_summaries.get('Mixed', 'No mixed comments analyzed')}
+        MIXED FEEDBACK:
+        {sentiment_summaries.get('Mixed', 'No mixed comments analyzed')}
 
-Please provide:
+        Please provide:
 
-1. **Executive Summary**: Overall stakeholder perspective on the proposed amendments
+        1. **Executive Summary**: Overall stakeholder perspective on the proposed amendments
 
-2. **Critical Issues**: Most important concerns that need policymaker attention
+        2. **Critical Issues**: Most important concerns that need policymaker attention
 
-3. **Consensus Areas**: Topics where stakeholders generally agree
+        3. **Consensus Areas**: Topics where stakeholders generally agree
 
-4. **Contentious Areas**: Issues generating divided opinions
+        4. **Contentious Areas**: Issues generating divided opinions
 
-5. **MSME Impact**: Specific concerns related to Micro, Small, and Medium Enterprises
+        5. **MSME Impact**: Specific concerns related to Micro, Small, and Medium Enterprises
 
-6. **Implementation Recommendations**: Key suggestions for successful implementation
+        6. **Implementation Recommendations**: Key suggestions for successful implementation
 
-7. **Policy Implications**: What these comments suggest about the effectiveness and acceptance of the proposed changes
+        7. **Policy Implications**: What these comments suggest about the effectiveness and acceptance of the proposed changes
 
-Format this as a comprehensive policy briefing document.
-"""
+        Format this as a comprehensive policy briefing document.
+        """
         
         system_prompt = self.create_system_prompt()
         return self.call_ollama_api(overall_prompt, system_prompt)
@@ -411,6 +411,13 @@ Format this as a comprehensive policy briefing document.
             json.dump(metadata, f, indent=2)
         print(f"Analysis metadata saved to: {metadata_path}")
 
+    def evaluate_summary_quality(self, summaries: Dict[str, str]) -> Dict[str, float]:
+    """Evaluate the quality of generated summaries using BLEU scores"""
+    from enhanced_bleu_evaluation import BLEUEvaluator
+    
+    evaluator = BLEUEvaluator()
+    return evaluator.analyze_summary_diversity(summaries)
+
 def main():
     """
     Main function to run the stakeholder comment analysis.
@@ -457,6 +464,8 @@ def main():
     print("- sentiment_summaries.json: Detailed summaries by sentiment")
     print("- overall_summary.txt: Comprehensive executive summary")
     print("- analysis_metadata.json: Analysis statistics and metadata")
+
+    bleu_results = analyzer.evaluate_summary_quality(sentiment_summaries)
 
 if __name__ == "__main__":
     main()

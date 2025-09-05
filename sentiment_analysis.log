@@ -4210,3 +4210,58 @@
 2025-09-05 07:18:16,912 - INFO - Total comments processed: 2000
 2025-09-05 07:18:16,912 - INFO - Success rate: 99.95%
 2025-09-05 07:18:16,913 - INFO - Sentiment distribution: {'Mixed': 1346, 'Negative': 282, 'Neutral': 276, 'Positive': 95, 'Error': 1}
+2025-09-05 18:41:59,256 - INFO - Loading Hugging Face sentiment model: cardiffnlp/twitter-roberta-base-sentiment-latest
+2025-09-05 18:41:59,256 - ERROR - Error loading HF model, using default: name 'torch' is not defined
+2025-09-05 18:42:01,545 - WARNING - Xet Storage is enabled for this repo, but the 'hf_xet' package is not installed. Falling back to regular HTTP download. For better performance, install the package with: `pip install huggingface_hub[hf_xet]` or `pip install hf_xet`
+2025-09-05 18:44:27,441 - INFO - Loading dataset...
+2025-09-05 18:44:27,442 - ERROR - Error in main execution: name 'load_dataset' is not defined
+2025-09-05 18:48:33,487 - INFO - [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5000
+ * Running on http://10.171.19.35:5000
+2025-09-05 18:48:33,488 - INFO - [33mPress CTRL+C to quit[0m
+2025-09-05 18:48:33,498 - INFO -  * Restarting with watchdog (windowsapi)
+2025-09-05 18:48:38,727 - WARNING -  * Debugger is active!
+2025-09-05 18:48:38,730 - INFO -  * Debugger PIN: 174-879-464
+2025-09-05 18:48:42,951 - INFO - 127.0.0.1 - - [05/Sep/2025 18:48:42] "GET / HTTP/1.1" 200 -
+2025-09-05 18:48:43,204 - INFO - 127.0.0.1 - - [05/Sep/2025 18:48:43] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
+2025-09-05 18:48:50,206 - INFO - Initializing analyzers...
+2025-09-05 18:48:50,207 - INFO - 127.0.0.1 - - [05/Sep/2025 18:48:50] "POST /start-analysis HTTP/1.1" 200 -
+2025-09-05 18:48:52,533 - INFO - 127.0.0.1 - - [05/Sep/2025 18:48:52] "GET /get-status HTTP/1.1" 200 -
+2025-09-05 18:48:54,235 - INFO - 127.0.0.1 - - [05/Sep/2025 18:48:54] "GET /get-status HTTP/1.1" 200 -
+2025-09-05 18:48:56,333 - WARNING - Xet Storage is enabled for this repo, but the 'hf_xet' package is not installed. Falling back to regular HTTP download. For better performance, install the package with: `pip install huggingface_hub[hf_xet]` or `pip install hf_xet`
+2025-09-05 18:48:56,542 - INFO - 127.0.0.1 - - [05/Sep/2025 18:48:56] "GET /get-status HTTP/1.1" 200 -
+2025-09-05 18:48:58,231 - INFO - 127.0.0.1 - - [05/Sep/2025 18:48:58] "GET /get-status HTTP/1.1" 200 -
+2025-09-05 18:49:00,547 - INFO - 127.0.0.1 - - [05/Sep/2025 18:49:00] "GET /get-status HTTP/1.1" 200 -
+2025-09-05 18:49:02,226 - INFO - 127.0.0.1 - - [05/Sep/2025 18:49:02] "GET /get-status HTTP/1.1" 200 -
+2025-09-05 18:49:04,533 - INFO - 127.0.0.1 - - [05/Sep/2025 18:49:04] "GET /get-status HTTP/1.1" 200 -
+2025-09-05 18:49:06,233 - INFO - 127.0.0.1 - - [05/Sep/2025 18:49:06] "GET /get-status HTTP/1.1" 200 -
+2025-09-05 18:49:08,540 - INFO - 127.0.0.1 - - [05/Sep/2025 18:49:08] "GET /get-status HTTP/1.1" 200 -
+2025-09-05 18:49:10,226 - INFO - 127.0.0.1 - - [05/Sep/2025 18:49:10] "GET /get-status HTTP/1.1" 200 -
+2025-09-05 18:49:12,545 - INFO - 127.0.0.1 - - [05/Sep/2025 18:49:12] "GET /get-status HTTP/1.1" 200 -
+2025-09-05 18:49:14,229 - INFO - 127.0.0.1 - - [05/Sep/2025 18:49:14] "GET /get-status HTTP/1.1" 200 -
+2025-09-05 18:49:16,541 - INFO - 127.0.0.1 - - [05/Sep/2025 18:49:16] "GET /get-status HTTP/1.1" 200 -
+2025-09-05 18:49:18,228 - INFO - 127.0.0.1 - - [05/Sep/2025 18:49:18] "GET /get-status HTTP/1.1" 200 -
+2025-09-05 18:49:20,535 - INFO - 127.0.0.1 - - [05/Sep/2025 18:49:20] "GET /get-status HTTP/1.1" 200 -
+2025-09-05 18:49:22,220 - INFO - 127.0.0.1 - - [05/Sep/2025 18:49:22] "GET /get-status HTTP/1.1" 200 -
+2025-09-05 18:49:24,548 - INFO - 127.0.0.1 - - [05/Sep/2025 18:49:24] "GET /get-status HTTP/1.1" 200 -
+2025-09-05 18:49:26,222 - INFO - 127.0.0.1 - - [05/Sep/2025 18:49:26] "GET /get-status HTTP/1.1" 200 -
+2025-09-05 18:49:28,533 - INFO - 127.0.0.1 - - [05/Sep/2025 18:49:28] "GET /get-status HTTP/1.1" 200 -
+2025-09-05 18:49:30,237 - INFO - 127.0.0.1 - - [05/Sep/2025 18:49:30] "GET /get-status HTTP/1.1" 200 -
+2025-09-05 18:49:32,542 - INFO - 127.0.0.1 - - [05/Sep/2025 18:49:32] "GET /get-status HTTP/1.1" 200 -
+2025-09-05 18:49:34,229 - INFO - 127.0.0.1 - - [05/Sep/2025 18:49:34] "GET /get-status HTTP/1.1" 200 -
+2025-09-05 18:49:37,187 - INFO - 127.0.0.1 - - [05/Sep/2025 18:49:37] "GET /get-status HTTP/1.1" 200 -
+2025-09-05 18:49:38,881 - INFO - 127.0.0.1 - - [05/Sep/2025 18:49:38] "GET /get-status HTTP/1.1" 200 -
+2025-09-05 18:49:41,186 - INFO - 127.0.0.1 - - [05/Sep/2025 18:49:41] "GET /get-status HTTP/1.1" 200 -
+2025-09-05 18:49:42,877 - INFO - 127.0.0.1 - - [05/Sep/2025 18:49:42] "GET /get-status HTTP/1.1" 200 -
+2025-09-05 18:49:45,233 - INFO - 127.0.0.1 - - [05/Sep/2025 18:49:45] "GET /get-status HTTP/1.1" 200 -
+2025-09-05 18:49:46,874 - INFO - 127.0.0.1 - - [05/Sep/2025 18:49:46] "GET /get-status HTTP/1.1" 200 -
+2025-09-05 18:49:49,191 - INFO - 127.0.0.1 - - [05/Sep/2025 18:49:49] "GET /get-status HTTP/1.1" 200 -
+2025-09-05 18:49:50,875 - INFO - 127.0.0.1 - - [05/Sep/2025 18:49:50] "GET /get-status HTTP/1.1" 200 -
+2025-09-05 18:49:53,195 - INFO - 127.0.0.1 - - [05/Sep/2025 18:49:53] "GET /get-status HTTP/1.1" 200 -
+2025-09-05 18:49:54,886 - INFO - 127.0.0.1 - - [05/Sep/2025 18:49:54] "GET /get-status HTTP/1.1" 200 -
+2025-09-05 18:49:57,185 - INFO - 127.0.0.1 - - [05/Sep/2025 18:49:57] "GET /get-status HTTP/1.1" 200 -
+2025-09-05 18:49:58,881 - INFO - 127.0.0.1 - - [05/Sep/2025 18:49:58] "GET /get-status HTTP/1.1" 200 -
+2025-09-05 18:50:01,190 - INFO - 127.0.0.1 - - [05/Sep/2025 18:50:01] "GET /get-status HTTP/1.1" 200 -
+2025-09-05 18:50:02,876 - INFO - 127.0.0.1 - - [05/Sep/2025 18:50:02] "GET /get-status HTTP/1.1" 200 -
+2025-09-05 18:50:05,186 - INFO - 127.0.0.1 - - [05/Sep/2025 18:50:05] "GET /get-status HTTP/1.1" 200 -
