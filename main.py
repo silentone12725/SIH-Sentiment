@@ -1,817 +1,479 @@
-import pandas as pd
+# main.py
+"""
+Comprehensive Analysis of Companies Act Amendment Consultations
+with optional HuggingFace or Ollama back-ends and on-disk model caching.
+
+Run:
+    python main.py            # starts Flask dashboard at http://localhost:5000
+    python main.py --cli      # runs analysis once in CLI mode (no web UI)
+"""
+
+from __future__ import annotations
+
+import hashlib
 import json
+import logging
 import os
 import threading
 import time
 from datetime import datetime
-from typing import Dict, Any, Optional
-import logging
+from typing import Any, Dict, Optional
 
-# Flask imports for web interface
+import joblib
+import pandas as pd
+from flask import (
+    Flask,
+    jsonify,
+    render_template_string,
+    request,
+    send_file,
+)
+
+# ──────────────────────────────────────────────────────────────────────────
+# Optional imports
+# ──────────────────────────────────────────────────────────────────────────
 try:
-    from flask import Flask, render_template_string, request, jsonify, send_file
-    FLASK_AVAILABLE = True
+    from summarize import StakeholderCommentAnalyzer
 except ImportError:
-    FLASK_AVAILABLE = False
-    print("Flask not available. Install with: pip install flask")
+    StakeholderCommentAnalyzer = None
 
-# Import your analysis modules
-from summarize import StakeholderCommentAnalyzer
-from sentiment_analyzer import OllamaSentimentAnalyzer
-from BLEU_score import BLEUEvaluator
-from PRF_scrore import calculate_prf_scores
+try:
+    from sentiment_analyzer import OllamaSentimentAnalyzer
+except ImportError:
+    OllamaSentimentAnalyzer = None
 
+try:
+    from BLEU_score import BLEUEvaluator
+except ImportError:
+    BLEUEvaluator = None
+
+try:
+    from PRF_scrore import calculate_prf_scores
+except ImportError:
+    calculate_prf_scores = None
+
+# Word-cloud may be missing in minimal environments
+try:
+    from create_word_cloud import WordCloud, STOPWORDS
+
+    WORDCLOUD_AVAILABLE = True
+except Exception:
+    try:
+        from wordcloud import WordCloud, STOPWORDS
+
+        WORDCLOUD_AVAILABLE = True
+    except Exception:
+        WORDCLOUD_AVAILABLE = False
+
+# ──────────────────────────────────────────────────────────────────────────
+# Logging
+# ──────────────────────────────────────────────────────────────────────────
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+)
+logger = logging.getLogger(__name__)
+
+# ──────────────────────────────────────────────────────────────────────────
+# Model-cache helper
+# ──────────────────────────────────────────────────────────────────────────
+class ModelCache:
+    def __init__(self, cache_dir: str = "model_cache"):
+        self.cache_dir = cache_dir
+        self.hf_cache_dir = os.path.join(cache_dir, "huggingface")
+        self.ollama_cache_dir = os.path.join(cache_dir, "ollama")
+        self.analysis_cache_dir = os.path.join(cache_dir, "analysis")
+        for d in (self.hf_cache_dir, self.ollama_cache_dir, self.analysis_cache_dir):
+            os.makedirs(d, exist_ok=True)
+
+    # internal helpers ----------------------------------------------------
+    def _hash(self, name: str, mtype: str) -> str:
+        return hashlib.md5(f"{mtype}_{name}".encode()).hexdigest()[:12]
+
+    def _path(self, name: str, mtype: str) -> str:
+        safe = name.replace("/", "_")
+        folder = (
+            self.hf_cache_dir
+            if mtype == "hf"
+            else self.ollama_cache_dir
+            if mtype == "ollama"
+            else self.analysis_cache_dir
+        )
+        return os.path.join(folder, f"{safe}_{self._hash(name, mtype)}.pkl")
+
+    # public API ----------------------------------------------------------
+    def cache_model(self, model, name: str, mtype: str = "hf") -> bool:
+        try:
+            joblib.dump(model, self._path(name, mtype))
+            logger.info(f"✅ cached {name}")
+            return True
+        except Exception as e:
+            logger.warning(f"cache failed for {name}: {e}")
+            return False
+
+    def load_model(self, name: str, mtype: str = "hf"):
+        p = self._path(name, mtype)
+        if os.path.exists(p):
+            try:
+                logger.info(f"✅ loaded cached {name}")
+                return joblib.load(p)
+            except Exception:
+                pass
+        return None
+
+    def get_info(self) -> Dict[str, Any]:
+        info: Dict[str, Any] = {"total_MB": 0, "huggingface": [], "ollama": [], "analysis": []}
+        for mtype, folder in [
+            ("huggingface", self.hf_cache_dir),
+            ("ollama", self.ollama_cache_dir),
+            ("analysis", self.analysis_cache_dir),
+        ]:
+            for f in os.listdir(folder):
+                if not f.endswith(".pkl"):
+                    continue
+                fp = os.path.join(folder, f)
+                sz = os.path.getsize(fp) / (1024 * 1024)
+                info["total_MB"] += sz
+                info[mtype].append(
+                    {
+                        "file": f,
+                        "size_MB": round(sz, 2),
+                        "modified": datetime.fromtimestamp(os.path.getmtime(fp)).isoformat(),
+                    }
+                )
+        info["total_MB"] = round(info["total_MB"], 2)
+        return info
+
+    def clear(self, mtype: Optional[str] = None):
+        import shutil
+
+        if mtype is None:
+            shutil.rmtree(self.cache_dir, ignore_errors=True)
+            os.makedirs(self.cache_dir, exist_ok=True)
+            logger.info("🗑️  cleared entire cache")
+        else:
+            folder = getattr(self, f"{mtype}_cache_dir", None)
+            if folder:
+                shutil.rmtree(folder, ignore_errors=True)
+                os.makedirs(folder, exist_ok=True)
+                logger.info(f"🗑️  cleared {mtype} cache")
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Analysis pipeline
+# ──────────────────────────────────────────────────────────────────────────
 class MCAAnalysisPipeline:
-    def __init__(self, 
-                 dataset_path: str = "mca_consultation_test_data_max_realism_artifacts.csv",
-                 model_type: str = "ollama",
-                 output_dir: str = "analysis_results"):
-        """
-        Initialize the complete MCA analysis pipeline
-        
-        Args:
-            dataset_path: Path to the CSV dataset
-            model_type: "ollama" or "huggingface"
-            output_dir: Directory to save results
-        """
+    def __init__(
+        self,
+        dataset_path: str = "mca_consultation_test_data_max_realism_artifacts.csv",
+        model_type: str = "huggingface",  # default changed
+        output_dir: str = "analysis_results",
+        cache_dir: str = "model_cache",
+    ):
         self.dataset_path = dataset_path
-        self.model_type = model_type
+        self.model_type = model_type.lower()
         self.output_dir = output_dir
-        
-        # Results storage
-        self.results = {
-            'dataset_stats': None,
-            'sentiment_summaries': None,
-            'overall_summary': None,
-            'bleu_results': None,
-            'prf_scores': None,
-            'wordcloud_path': None,
-            'analysis_metadata': None,
-            'status': 'not_started',
-            'progress': 0,
-            'current_step': 'Ready'
+        self.cache = ModelCache(cache_dir)
+
+        # results dictionary exposed to UI
+        self.results: Dict[str, Any] = {
+            "status": "not_started",
+            "progress": 0,
+            "current_step": "ready",
         }
-        
-        # Analysis components
+
+        # components
         self.comment_analyzer = None
         self.sentiment_analyzer = None
         self.bleu_evaluator = None
-        
-        # Setup logging
-        logging.basicConfig(level=logging.INFO)
-        self.logger = logging.getLogger(__name__)
 
-    def initialize_analyzers(self):
-        """Initialize all analysis components"""
+    # helpers --------------------------------------------------------------
+    @staticmethod
+    def _ollama_up(base_url: str = "http://localhost:11434") -> bool:
+        import requests
+
         try:
-            self.logger.info("Initializing analyzers...")
-            self.results['current_step'] = 'Initializing analyzers'
-            self.results['progress'] = 10
-            
-            # Initialize comment analyzer
-            self.comment_analyzer = StakeholderCommentAnalyzer(
-                model_type=self.model_type,
-                ollama_url="http://localhost:11434",
-                model="llama3.1",
-                hf_model="microsoft/DialoGPT-medium"
-            )
-            
-            # Initialize sentiment analyzer
-            self.sentiment_analyzer = OllamaSentimentAnalyzer(
-                model_type=self.model_type,
-                base_url="http://localhost:11434",
-                model="llama3.1",
-                hf_model="cardiffnlp/twitter-roberta-base-sentiment-latest"
-            )
-            
-            # Initialize BLEU evaluator
-            self.bleu_evaluator = BLEUEvaluator()
-            
-            self.logger.info("Analyzers initialized successfully")
-            return True
-            
-        except Exception as e:
-            self.logger.error(f"Error initializing analyzers: {e}")
-            self.results['status'] = 'error'
-            self.results['error'] = str(e)
+            return requests.get(f"{base_url}/api/tags", timeout=3).status_code == 200
+        except Exception:
             return False
 
-    def load_and_analyze_dataset(self):
-        """Load dataset and perform basic analysis"""
+    # main steps -----------------------------------------------------------
+    def initialize_analyzers(self) -> bool:
+        self.results.update(current_step="initializing analyzers", progress=10)
         try:
-            self.logger.info("Loading dataset...")
-            self.results['current_step'] = 'Loading dataset'
-            self.results['progress'] = 20
-            
-            # Load dataset
-            df = pd.read_csv(self.dataset_path)
-            
-            # Generate dataset statistics
-            self.results['dataset_stats'] = {
-                'total_comments': len(df),
-                'unique_stakeholders': df['stakeholder_name'].nunique(),
-                'draft_documents': df['draft_id'].nunique(),
-                'sections_covered': df['draft_section'].nunique(),
-                'sentiment_distribution': df['expected_sentiment'].value_counts().to_dict(),
-                'draft_distribution': df['draft_id'].value_counts().to_dict(),
-                'section_distribution': df['draft_section'].value_counts().to_dict()
-            }
-            
-            self.logger.info(f"Dataset loaded: {len(df)} comments")
-            return df
-            
+            # automatic fallback if Ollama chosen but unreachable
+            if self.model_type == "ollama" and not self._ollama_up():
+                logger.warning("Ollama unreachable – switching to HuggingFace mode.")
+                self.model_type = "huggingface"
+
+            # 1. summarization component ---------------------------------
+            if StakeholderCommentAnalyzer:
+                hf_sum_model = "silentone0725/merged_16bit"
+                cached = self.cache.load_model(hf_sum_model, "hf")
+                self.comment_analyzer = StakeholderCommentAnalyzer(
+                    model_type=self.model_type,
+                    ollama_url="http://localhost:11434",
+                    model="llama3.1",
+                    hf_model=hf_sum_model,
+                    use_gpu=True,
+                )
+                if cached:
+                    self.comment_analyzer.hf_pipeline = cached
+                elif self.model_type == "huggingface":
+                    self.cache.cache_model(self.comment_analyzer.hf_pipeline, hf_sum_model, "hf")
+
+            # 2. sentiment component -------------------------------------
+            if OllamaSentimentAnalyzer:
+                hf_sent_model = "cardiffnlp/twitter-roberta-base-sentiment-latest"
+                cached = self.cache.load_model(hf_sent_model, "hf")
+                self.sentiment_analyzer = OllamaSentimentAnalyzer(
+                    model_type=self.model_type,
+                    base_url="http://localhost:11434",
+                    model="llama3.1",
+                    hf_model=hf_sent_model,
+                )
+                if cached:
+                    self.sentiment_analyzer.hf_pipeline = cached
+                elif self.model_type == "huggingface":
+                    self.cache.cache_model(self.sentiment_analyzer.hf_pipeline, hf_sent_model, "hf")
+
+            # 3. BLEU evaluator ------------------------------------------
+            if BLEUEvaluator:
+                self.bleu_evaluator = BLEUEvaluator()
+
+            self.results["cache_info"] = self.cache.get_info()
+            logger.info("Analyzers initialized.")
+            return True
         except Exception as e:
-            self.logger.error(f"Error loading dataset: {e}")
-            self.results['status'] = 'error'
-            self.results['error'] = str(e)
+            logger.error(f"init failed: {e}")
+            self.results.update(status="error", error=str(e))
+            return False
+
+    def load_dataset(self) -> Optional[pd.DataFrame]:
+        self.results.update(current_step="loading dataset", progress=20)
+        try:
+            df = pd.read_csv(self.dataset_path)
+            stats = {
+                "total_comments": len(df),
+                "unique_stakeholders": df["stakeholder_name"].nunique(),
+                "draft_documents": df["draft_id"].nunique(),
+                "sections_covered": df["draft_section"].nunique(),
+                "sentiment_distribution": df["expected_sentiment"].value_counts().to_dict(),
+            }
+            self.results["dataset_stats"] = stats
+            logger.info("dataset loaded")
+            return df
+        except Exception as e:
+            logger.error(e)
+            self.results.update(status="error", error=str(e))
             return None
 
-    def perform_sentiment_analysis(self, df):
-        """Perform sentiment analysis and summarization"""
-        try:
-            self.logger.info("Performing sentiment analysis...")
-            self.results['current_step'] = 'Analyzing sentiments'
-            self.results['progress'] = 40
-            
-            # Generate sentiment summaries
-            self.results['sentiment_summaries'] = self.comment_analyzer.analyze_all_sentiment_groups(df)
-            
-            self.results['current_step'] = 'Generating overall summary'
-            self.results['progress'] = 60
-            
-            # Generate overall summary
-            self.results['overall_summary'] = self.comment_analyzer.generate_overall_summary(
-                df, self.results['sentiment_summaries']
-            )
-            
-            self.logger.info("Sentiment analysis completed")
-            return True
-            
-        except Exception as e:
-            self.logger.error(f"Error in sentiment analysis: {e}")
-            self.results['status'] = 'error'
-            self.results['error'] = str(e)
-            return False
-
-    def evaluate_quality(self):
-        """Evaluate summary quality using BLEU scores"""
-        try:
-            self.logger.info("Evaluating summary quality...")
-            self.results['current_step'] = 'Evaluating quality'
-            self.results['progress'] = 80
-            
-            # Calculate BLEU scores
-            self.results['bleu_results'] = self.bleu_evaluator.analyze_summary_diversity(
-                self.results['sentiment_summaries']
-            )
-            
-            self.logger.info("Quality evaluation completed")
-            return True
-            
-        except Exception as e:
-            self.logger.error(f"Error in quality evaluation: {e}")
-            # Don't fail the entire pipeline for BLEU errors
-            self.results['bleu_results'] = {'error': str(e)}
-            return True
-
-    def generate_wordcloud(self, df):
-        """Generate word cloud from comments"""
-        try:
-            from wordcloud import WordCloud, STOPWORDS
-            import matplotlib.pyplot as plt
-            
-            self.logger.info("Generating word cloud...")
-            
-            # Combine all comments
-            text_data = " ".join(df["comment"].astype(str))
-            
-            # Custom stopwords
-            custom_stopwords = set(STOPWORDS)
-            custom_stopwords.update([
-                "section", "draft", "provision", "amendment", "company",
-                "act", "rule", "subsection", "clause", "law", "mca",
-                "shall", "herein", "thereof", "wherein"
-            ])
-            
-            # Generate word cloud
-            wordcloud = WordCloud(
-                width=1200,
-                height=600,
-                background_color="white",
-                colormap="viridis",
-                stopwords=custom_stopwords
-            ).generate(text_data)
-            
-            # Save word cloud
-            os.makedirs(self.output_dir, exist_ok=True)
-            wordcloud_path = os.path.join(self.output_dir, "wordcloud.png")
-            wordcloud.to_file(wordcloud_path)
-            
-            self.results['wordcloud_path'] = wordcloud_path
-            self.logger.info(f"Word cloud saved to {wordcloud_path}")
-            return True
-            
-        except Exception as e:
-            self.logger.error(f"Error generating word cloud: {e}")
-            self.results['wordcloud_path'] = None
-            return True  # Don't fail pipeline for wordcloud errors
-
-    def save_results(self, df):
-        """Save all analysis results"""
-        try:
-            self.logger.info("Saving results...")
-            self.results['current_step'] = 'Saving results'
-            self.results['progress'] = 90
-            
-            # Create output directory
-            os.makedirs(self.output_dir, exist_ok=True)
-            
-            # Save comprehensive results
-            analysis_results = {
-                'timestamp': datetime.now().isoformat(),
-                'dataset_stats': self.results['dataset_stats'],
-                'sentiment_summaries': self.results['sentiment_summaries'],
-                'overall_summary': self.results['overall_summary'],
-                'bleu_results': self.results['bleu_results'],
-                'model_type': self.model_type
-            }
-            
-            # Save to JSON
-            results_path = os.path.join(self.output_dir, "complete_analysis_results.json")
-            with open(results_path, 'w', encoding='utf-8') as f:
-                json.dump(analysis_results, f, indent=2, ensure_ascii=False)
-            
-            # Save individual components (using existing methods)
-            self.comment_analyzer.save_results(
-                df, 
-                self.results['sentiment_summaries'], 
-                self.results['overall_summary'],
-                self.output_dir
-            )
-            
-            self.logger.info(f"Results saved to {self.output_dir}")
-            return True
-            
-        except Exception as e:
-            self.logger.error(f"Error saving results: {e}")
-            self.results['status'] = 'error'
-            self.results['error'] = str(e)
-            return False
-
-    def run_complete_analysis(self):
-        """Run the complete analysis pipeline"""
-        try:
-            self.results['status'] = 'running'
-            self.results['progress'] = 0
-            self.results['start_time'] = datetime.now().isoformat()
-            
-            # Step 1: Initialize analyzers
-            if not self.initialize_analyzers():
-                return self.results
-            
-            # Step 2: Load dataset
-            df = self.load_and_analyze_dataset()
-            if df is None:
-                return self.results
-            
-            # Step 3: Perform sentiment analysis
-            if not self.perform_sentiment_analysis(df):
-                return self.results
-            
-            # Step 4: Evaluate quality
-            if not self.evaluate_quality():
-                return self.results
-            
-            # Step 5: Generate word cloud
-            self.generate_wordcloud(df)
-            
-            # Step 6: Save results
-            if not self.save_results(df):
-                return self.results
-            
-            # Complete
-            self.results['status'] = 'completed'
-            self.results['progress'] = 100
-            self.results['current_step'] = 'Analysis completed'
-            self.results['end_time'] = datetime.now().isoformat()
-            
-            self.logger.info("Complete analysis finished successfully")
-            return self.results
-            
-        except Exception as e:
-            self.logger.error(f"Error in complete analysis: {e}")
-            self.results['status'] = 'error'
-            self.results['error'] = str(e)
+    def run(self) -> Dict[str, Any]:
+        self.results.update(status="running", start_time=datetime.now().isoformat())
+        if not self.initialize_analyzers():
             return self.results
 
-# Flask Web Interface
+        df = self.load_dataset()
+        if df is None:
+            return self.results
+
+        # --------------- sentiment + summary ---------------------------
+        self.results.update(current_step="sentiment & summarization", progress=40)
+        try:
+            if self.comment_analyzer:
+                summaries = self.comment_analyzer.analyze_all_sentiment_groups(df)
+                self.results["sentiment_summaries"] = summaries
+                self.results["overall_summary"] = self.comment_analyzer.generate_overall_summary(
+                    df, summaries
+                )
+            else:
+                self.results["overall_summary"] = "summarizer unavailable"
+        except Exception as e:
+            logger.error(e)
+            self.results.setdefault("errors", []).append(str(e))
+
+        # --------------- BLEU evaluation ------------------------------
+        self.results.update(current_step="BLEU evaluation", progress=80)
+        if self.bleu_evaluator and self.results.get("sentiment_summaries"):
+            try:
+                self.results["bleu_results"] = self.bleu_evaluator.analyze_summary_diversity(
+                    self.results["sentiment_summaries"]
+                )
+            except Exception as e:
+                self.results["bleu_results"] = {"error": str(e)}
+
+        # --------------- word-cloud ------------------------------------
+        if WORDCLOUD_AVAILABLE:
+            try:
+                text = " ".join(df["comment"].astype(str))
+                wc = WordCloud(width=1200, height=600, background_color="white").generate(text)
+                os.makedirs(self.output_dir, exist_ok=True)
+                wc_path = os.path.join(self.output_dir, "wordcloud.png")
+                wc.to_file(wc_path)
+                self.results["wordcloud_path"] = wc_path
+            except Exception:
+                pass
+
+        # --------------- save ------------------------------------------
+        os.makedirs(self.output_dir, exist_ok=True)
+        json.dump(self.results, open(os.path.join(self.output_dir, "results.json"), "w"), indent=2)
+
+        self.results.update(
+            status="completed",
+            progress=100,
+            end_time=datetime.now().isoformat(),
+            current_step="done",
+        )
+        logger.info("analysis finished")
+        return self.results
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Flask dashboard
+# ──────────────────────────────────────────────────────────────────────────
 app = Flask(__name__)
-pipeline = None
-analysis_thread = None
+pipeline: Optional[MCAAnalysisPipeline] = None
+analysis_thread: Optional[threading.Thread] = None
 
-@app.route('/')
-def dashboard():
-    return render_template_string(DASHBOARD_HTML)
-
-@app.route('/start-analysis', methods=['POST'])
-def start_analysis():
-    global pipeline, analysis_thread
-    
-    if analysis_thread and analysis_thread.is_alive():
-        return jsonify({'status': 'busy', 'message': 'Analysis already running'})
-    
-    # Get configuration from request
-    config = request.get_json() or {}
-    dataset_path = config.get('dataset_path', 'mca_consultation_test_data_max_realism_artifacts.csv')
-    model_type = config.get('model_type', 'ollama')
-    
-    # Initialize pipeline
-    pipeline = MCAAnalysisPipeline(
-        dataset_path=dataset_path,
-        model_type=model_type
-    )
-    
-    # Start analysis in background thread
-    def run_analysis():
-        pipeline.run_complete_analysis()
-    
-    analysis_thread = threading.Thread(target=run_analysis)
-    analysis_thread.start()
-    
-    return jsonify({'status': 'started', 'message': 'Analysis started successfully'})
-
-@app.route('/get-status')
-def get_status():
-    if pipeline is None:
-        return jsonify({'status': 'not_started'})
-    
-    return jsonify(pipeline.results)
-
-@app.route('/get-results')
-def get_results():
-    if pipeline is None or pipeline.results['status'] != 'completed':
-        return jsonify({'status': 'not_ready'})
-    
-    return jsonify(pipeline.results)
-
-@app.route('/download-results')
-def download_results():
-    if pipeline is None or pipeline.results['status'] != 'completed':
-        return jsonify({'error': 'Results not available'})
-    
-    results_path = os.path.join(pipeline.output_dir, "complete_analysis_results.json")
-    return send_file(results_path, as_attachment=True)
-
-# HTML Template for Dashboard
-DASHBOARD_HTML = '''
-<!DOCTYPE html>
+# --- replace your current DASHBOARD_HTML definition with the one below ----
+DASHBOARD_HTML = """
+<!doctype html>
 <html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MCA Stakeholder Analysis Dashboard</title>
+  <head>
+    <meta charset="utf-8">
+    <title>MCA Consultation Analysis</title>
+
+    <!-- Bootstrap 5 (loaded from CDN) -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
+          rel="stylesheet"
+          integrity="sha384-4bAeGmiqVNwNDRW8bX9+xV87jPxfy/dydiH+SBzPDTtavdTSxDYjbiY5XpjF6OqC"
+          crossorigin="anonymous">
+
     <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { 
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-            padding: 20px;
-        }
-        .container { 
-            max-width: 1200px; 
-            margin: 0 auto; 
-            background: white; 
-            border-radius: 15px; 
-            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
-            overflow: hidden;
-        }
-        .header { 
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white; 
-            padding: 30px; 
-            text-align: center; 
-        }
-        .header h1 { font-size: 2.5em; margin-bottom: 10px; }
-        .header p { font-size: 1.1em; opacity: 0.9; }
-        
-        .controls { 
-            padding: 30px; 
-            background: #f8f9fa; 
-            border-bottom: 1px solid #dee2e6;
-        }
-        .control-group { 
-            display: flex; 
-            gap: 20px; 
-            align-items: center; 
-            flex-wrap: wrap;
-        }
-        .control-item { display: flex; flex-direction: column; gap: 5px; }
-        .control-item label { font-weight: 600; color: #495057; }
-        .control-item select, .control-item input { 
-            padding: 10px; 
-            border: 2px solid #dee2e6; 
-            border-radius: 8px; 
-            font-size: 14px;
-        }
-        
-        .start-btn { 
-            background: linear-gradient(135deg, #28a745, #20c997); 
-            color: white; 
-            border: none; 
-            padding: 12px 30px; 
-            border-radius: 25px; 
-            font-size: 16px; 
-            font-weight: 600;
-            cursor: pointer; 
-            transition: all 0.3s ease;
-        }
-        .start-btn:hover { transform: translateY(-2px); box-shadow: 0 5px 15px rgba(40,167,69,0.4); }
-        .start-btn:disabled { background: #6c757d; cursor: not-allowed; transform: none; }
-        
-        .progress-section { 
-            padding: 30px; 
-            display: none; 
-        }
-        .progress-bar { 
-            width: 100%; 
-            height: 8px; 
-            background: #e9ecef; 
-            border-radius: 4px; 
-            overflow: hidden; 
-            margin-bottom: 15px;
-        }
-        .progress-fill { 
-            height: 100%; 
-            background: linear-gradient(90deg, #667eea, #764ba2); 
-            transition: width 0.3s ease;
-        }
-        .progress-text { 
-            text-align: center; 
-            color: #495057; 
-            font-weight: 600;
-        }
-        
-        .results-section { 
-            padding: 30px; 
-            display: none; 
-        }
-        .results-grid { 
-            display: grid; 
-            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); 
-            gap: 20px; 
-            margin-bottom: 30px;
-        }
-        .result-card { 
-            background: #f8f9fa; 
-            border-radius: 10px; 
-            padding: 20px; 
-            border-left: 4px solid #667eea;
-        }
-        .result-card h3 { 
-            color: #495057; 
-            margin-bottom: 15px; 
-            font-size: 1.2em;
-        }
-        .stat-item { 
-            display: flex; 
-            justify-content: space-between; 
-            margin-bottom: 8px;
-        }
-        .stat-value { 
-            font-weight: 600; 
-            color: #667eea;
-        }
-        
-        .sentiment-cards { 
-            display: grid; 
-            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); 
-            gap: 20px; 
-            margin: 20px 0;
-        }
-        .sentiment-card { 
-            background: white; 
-            border-radius: 10px; 
-            padding: 20px; 
-            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-            border-top: 4px solid;
-        }
-        .sentiment-card.positive { border-top-color: #28a745; }
-        .sentiment-card.negative { border-top-color: #dc3545; }
-        .sentiment-card.neutral { border-top-color: #6c757d; }
-        .sentiment-card.mixed { border-top-color: #ffc107; }
-        
-        .summary-section { 
-            background: #f8f9fa; 
-            border-radius: 10px; 
-            padding: 25px; 
-            margin: 20px 0;
-        }
-        .summary-section h3 { 
-            color: #495057; 
-            margin-bottom: 15px;
-        }
-        .summary-text { 
-            line-height: 1.6; 
-            color: #6c757d;
-        }
-        
-        .bleu-section { 
-            background: white; 
-            border-radius: 10px; 
-            padding: 25px; 
-            margin: 20px 0;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-        }
-        .bleu-stats { 
-            display: grid; 
-            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); 
-            gap: 15px; 
-            margin-bottom: 20px;
-        }
-        .bleu-stat { 
-            text-align: center; 
-            padding: 15px; 
-            background: #f8f9fa; 
-            border-radius: 8px;
-        }
-        .bleu-stat .value { 
-            font-size: 1.5em; 
-            font-weight: 600; 
-            color: #667eea;
-        }
-        .bleu-stat .label { 
-            color: #6c757d; 
-            font-size: 0.9em;
-        }
-        
-        .download-section { 
-            text-align: center; 
-            padding: 30px; 
-            background: #f8f9fa;
-        }
-        .download-btn { 
-            background: linear-gradient(135deg, #17a2b8, #138496); 
-            color: white; 
-            text-decoration: none; 
-            padding: 12px 30px; 
-            border-radius: 25px; 
-            font-weight: 600;
-            display: inline-block;
-            transition: all 0.3s ease;
-        }
-        .download-btn:hover { 
-            transform: translateY(-2px); 
-            box-shadow: 0 5px 15px rgba(23,162,184,0.4);
-        }
-        
-        .error-section { 
-            background: #f8d7da; 
-            color: #721c24; 
-            padding: 20px; 
-            border-radius: 10px; 
-            margin: 20px 0;
-            display: none;
-        }
+      body { background:#f8f9fa; }
+      h2   { margin-top:1.5rem; }
+      #status {
+         max-height:60vh;
+         overflow:auto;
+         font-size:0.9rem;
+         background:#fff;
+         border:1px solid #dee2e6;
+         padding:1rem;
+         border-radius:0.5rem;
+      }
     </style>
-</head>
-<body>
-    <div class="container">
-        <div class="header">
-            <h1>🏛️ MCA Stakeholder Analysis Dashboard</h1>
-            <p>Comprehensive Analysis of Companies Act Amendment Consultations</p>
-        </div>
-        
-        <div class="controls">
-            <div class="control-group">
-                <div class="control-item">
-                    <label>Dataset Path:</label>
-                    <input type="text" id="dataset-path" value="mca_consultation_test_data_max_realism_artifacts.csv">
-                </div>
-                <div class="control-item">
-                    <label>Model Type:</label>
-                    <select id="model-type">
-                        <option value="ollama">Ollama (Local)</option>
-                        <option value="huggingface">Hugging Face</option>
-                    </select>
-                </div>
-                <button class="start-btn" onclick="startAnalysis()">🚀 Start Analysis</button>
-            </div>
-        </div>
-        
-        <div class="progress-section" id="progress-section">
-            <h2>Analysis Progress</h2>
-            <div class="progress-bar">
-                <div class="progress-fill" id="progress-fill"></div>
-            </div>
-            <div class="progress-text" id="progress-text">Initializing...</div>
-        </div>
-        
-        <div class="error-section" id="error-section">
-            <h3>⚠️ Error</h3>
-            <p id="error-message"></p>
-        </div>
-        
-        <div class="results-section" id="results-section">
-            <h2>📊 Analysis Results</h2>
-            
-            <div class="results-grid" id="dataset-stats">
-                <!-- Dataset statistics will be populated here -->
-            </div>
-            
-            <div class="sentiment-cards" id="sentiment-summaries">
-                <!-- Sentiment analysis results will be populated here -->
-            </div>
-            
-            <div class="summary-section">
-                <h3>📋 Overall Summary</h3>
-                <div class="summary-text" id="overall-summary">
-                    <!-- Overall summary will be populated here -->
-                </div>
-            </div>
-            
-            <div class="bleu-section">
-                <h3>🎯 Quality Analysis (BLEU Scores)</h3>
-                <div class="bleu-stats" id="bleu-stats">
-                    <!-- BLEU statistics will be populated here -->
-                </div>
-            </div>
-            
-            <div class="download-section">
-                <a href="/download-results" class="download-btn">📥 Download Complete Results</a>
-            </div>
-        </div>
+  </head>
+
+  <body class="container">
+    <h2 class="text-primary">MCA Consultation Analysis with Caching</h2>
+
+    <div class="mb-3">
+      <button id="btnStart" class="btn btn-success me-2">Start (HuggingFace)</button>
+      <button id="btnStartOllama" class="btn btn-outline-success">Start (Ollama)</button>
+      <button id="btnClear" class="btn btn-outline-danger ms-4">Clear Cache</button>
     </div>
 
-    <script>
-        let pollInterval;
-        
-        function startAnalysis() {
-            const datasetPath = document.getElementById('dataset-path').value;
-            const modelType = document.getElementById('model-type').value;
-            
-            document.querySelector('.start-btn').disabled = true;
-            document.getElementById('progress-section').style.display = 'block';
-            document.getElementById('results-section').style.display = 'none';
-            document.getElementById('error-section').style.display = 'none';
-            
-            fetch('/start-analysis', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({dataset_path: datasetPath, model_type: modelType})
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (data.status === 'started') {
-                    pollStatus();
-                } else {
-                    showError('Failed to start analysis: ' + data.message);
-                }
-            })
-            .catch(error => showError('Error starting analysis: ' + error));
-        }
-        
-        function pollStatus() {
-            pollInterval = setInterval(() => {
-                fetch('/get-status')
-                .then(response => response.json())
-                .then(data => {
-                    updateProgress(data);
-                    
-                    if (data.status === 'completed') {
-                        clearInterval(pollInterval);
-                        showResults(data);
-                    } else if (data.status === 'error') {
-                        clearInterval(pollInterval);
-                        showError(data.error);
-                    }
-                })
-                .catch(error => {
-                    clearInterval(pollInterval);
-                    showError('Error polling status: ' + error);
-                });
-            }, 2000);
-        }
-        
-        function updateProgress(data) {
-            const progressFill = document.getElementById('progress-fill');
-            const progressText = document.getElementById('progress-text');
-            
-            progressFill.style.width = (data.progress || 0) + '%';
-            progressText.textContent = data.current_step || 'Processing...';
-        }
-        
-        function showResults(data) {
-            document.getElementById('progress-section').style.display = 'none';
-            document.getElementById('results-section').style.display = 'block';
-            document.querySelector('.start-btn').disabled = false;
-            
-            // Populate dataset statistics
-            populateDatasetStats(data.dataset_stats);
-            
-            // Populate sentiment summaries
-            populateSentimentSummaries(data.sentiment_summaries);
-            
-            // Populate overall summary
-            document.getElementById('overall-summary').textContent = data.overall_summary;
-            
-            // Populate BLEU results
-            populateBleuResults(data.bleu_results);
-        }
-        
-        function populateDatasetStats(stats) {
-            const container = document.getElementById('dataset-stats');
-            container.innerHTML = `
-                <div class="result-card">
-                    <h3>📊 Dataset Overview</h3>
-                    <div class="stat-item"><span>Total Comments:</span><span class="stat-value">${stats.total_comments}</span></div>
-                    <div class="stat-item"><span>Unique Stakeholders:</span><span class="stat-value">${stats.unique_stakeholders}</span></div>
-                    <div class="stat-item"><span>Draft Documents:</span><span class="stat-value">${stats.draft_documents}</span></div>
-                    <div class="stat-item"><span>Sections Covered:</span><span class="stat-value">${stats.sections_covered}</span></div>
-                </div>
-                <div class="result-card">
-                    <h3>💭 Sentiment Distribution</h3>
-                    ${Object.entries(stats.sentiment_distribution).map(([sentiment, count]) => 
-                        `<div class="stat-item"><span>${sentiment}:</span><span class="stat-value">${count}</span></div>`
-                    ).join('')}
-                </div>
-            `;
-        }
-        
-        function populateSentimentSummaries(summaries) {
-            const container = document.getElementById('sentiment-summaries');
-            const sentimentClasses = {
-                'Positive': 'positive',
-                'Negative': 'negative', 
-                'Neutral': 'neutral',
-                'Mixed': 'mixed'
-            };
-            
-            container.innerHTML = Object.entries(summaries).map(([sentiment, summary]) => `
-                <div class="sentiment-card ${sentimentClasses[sentiment]}">
-                    <h3>${sentiment} Feedback</h3>
-                    <p>${summary.substring(0, 300)}${summary.length > 300 ? '...' : ''}</p>
-                </div>
-            `).join('');
-        }
-        
-        function populateBleuResults(bleu) {
-            const container = document.getElementById('bleu-stats');
-            if (bleu && !bleu.error) {
-                container.innerHTML = `
-                    <div class="bleu-stat">
-                        <div class="value">${bleu.average_bleu.toFixed(4)}</div>
-                        <div class="label">Average BLEU</div>
-                    </div>
-                    <div class="bleu-stat">
-                        <div class="value">${bleu.min_bleu.toFixed(4)}</div>
-                        <div class="label">Minimum</div>
-                    </div>
-                    <div class="bleu-stat">
-                        <div class="value">${bleu.max_bleu.toFixed(4)}</div>
-                        <div class="label">Maximum</div>
-                    </div>
-                    <div class="bleu-stat">
-                        <div class="value">${bleu.std_bleu.toFixed(4)}</div>
-                        <div class="label">Std Deviation</div>
-                    </div>
-                `;
-            } else {
-                container.innerHTML = '<p>BLEU evaluation unavailable</p>';
-            }
-        }
-        
-        function showError(message) {
-            document.getElementById('progress-section').style.display = 'none';
-            document.getElementById('error-section').style.display = 'block';
-            document.getElementById('error-message').textContent = message;
-            document.querySelector('.start-btn').disabled = false;
-        }
-    </script>
-</body>
-</html>
-'''
+    <h5>Status</h5>
+    <pre id="status">Not started</pre>
 
-def main():
-    """Main function to run the dashboard"""
-    if not FLASK_AVAILABLE:
-        print("Flask is required for the web interface.")
-        print("Install with: pip install flask")
-        print("\nAlternatively, running analysis without web interface:")
-        
-        # Run analysis without web interface
-        pipeline = MCAAnalysisPipeline()
-        results = pipeline.run_complete_analysis()
-        print(f"\nAnalysis completed with status: {results['status']}")
-        if results['status'] == 'completed':
-            print(f"Results saved to: {pipeline.output_dir}")
-        return
-    
-    print("🚀 Starting MCA Analysis Dashboard...")
-    print("📊 Dashboard will be available at: http://localhost:5000")
-    print("⚠️  Make sure your models (Ollama/HuggingFace) are properly configured")
-    
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    <!-- Bootstrap JS (optional, only for button ripple) -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"
+            integrity="sha384-jnrR5Qq1hy89RUeMc6wJS4NqJoT5a3mXTZrGCjFJ2v6N3zkQsEW9Q9u9eFJxFLJY"
+            crossorigin="anonymous"></script>
+
+    <script>
+      async function hit(url, opts={}) {
+        const r = await fetch(url, opts);
+        return r.ok ? r.json() : {error: r.status};
+      }
+
+      async function start(type) {
+        await hit('/start-analysis', {
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({model_type:type})
+        });
+      }
+
+      // buttons
+      document.getElementById('btnStart').onclick       = () => start('huggingface');
+      document.getElementById('btnStartOllama').onclick  = () => start('ollama');
+      document.getElementById('btnClear').onclick        = () =>
+          hit('/clear-cache', {method:'POST'}).then(() => alert('Cache cleared'));
+
+      // poll status every 2s
+      setInterval(()=> hit('/get-status').then(data=>{
+        document.getElementById('status').textContent =
+          JSON.stringify(data, null, 2);
+      }), 2000);
+    </script>
+  </body>
+</html>
+"""
+
+
+@app.route("/")
+def dash():
+    return render_template_string(DASHBOARD_HTML)
+
+
+@app.route("/start-analysis", methods=["POST"])
+def start_analysis():
+    global pipeline, analysis_thread
+    if analysis_thread and analysis_thread.is_alive():
+        return jsonify({"status": "busy"})
+    cfg = request.get_json() or {}
+    dataset = cfg.get("dataset_path", "mca_consultation_test_data_max_realism_artifacts.csv")
+    mtype = cfg.get("model_type", "huggingface").lower()
+    pipeline = MCAAnalysisPipeline(dataset_path=dataset, model_type=mtype)
+    analysis_thread = threading.Thread(target=pipeline.run, daemon=True)
+    analysis_thread.start()
+    return jsonify({"status": "started"})
+
+
+@app.route("/get-status")
+def get_status():
+    return jsonify(pipeline.results if pipeline else {"status": "idle"})
+
+
+@app.route("/download-results")
+def download_results():
+    if not pipeline or pipeline.results.get("status") != "completed":
+        return jsonify({"error": "not ready"})
+    path = os.path.join(pipeline.output_dir, "results.json")
+    return send_file(path, as_attachment=True)
+
+
+@app.route("/cache-info")
+def cache_info():
+    cache = pipeline.cache if pipeline else ModelCache()
+    return jsonify(cache.get_info())
+
+
+@app.route("/clear-cache", methods=["POST"])
+def clear_cache():
+    mt = (request.get_json() or {}).get("model_type")
+    (pipeline.cache if pipeline else ModelCache()).clear(mt)
+    return jsonify({"status": "cleared"})
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# CLI entry-point
+# ──────────────────────────────────────────────────────────────────────────
+def _cli():
+    p = MCAAnalysisPipeline()
+    res = p.run()
+    print(json.dumps(res, indent=2))
+
 
 if __name__ == "__main__":
-    main()
+    import argparse
+
+    argp = argparse.ArgumentParser()
+    argp.add_argument("--cli", action="store_true", help="run once then exit (no Flask)")
+    args = argp.parse_args()
+    if args.cli:
+        _cli()
+    else:
+        port = int(os.getenv("PORT", 5000))
+        app.run(debug=False, port=port)
