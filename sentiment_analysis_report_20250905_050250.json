@@ -1,0 +1,117 @@
+{
+  "sentiment_distribution": {
+    "Mixed": 1346,
+    "Negative": 282,
+    "Neutral": 276,
+    "Positive": 95,
+    "Error": 1
+  },
+  "sentiment_by_draft": {
+    "Error": {
+      "Draft_1": 0,
+      "Draft_2": 0,
+      "Draft_3": 0,
+      "Draft_4": 0,
+      "Draft_5": 1,
+      "Draft_6": 0
+    },
+    "Mixed": {
+      "Draft_1": 250,
+      "Draft_2": 210,
+      "Draft_3": 217,
+      "Draft_4": 211,
+      "Draft_5": 225,
+      "Draft_6": 233
+    },
+    "Negative": {
+      "Draft_1": 44,
+      "Draft_2": 43,
+      "Draft_3": 46,
+      "Draft_4": 47,
+      "Draft_5": 60,
+      "Draft_6": 42
+    },
+    "Neutral": {
+      "Draft_1": 48,
+      "Draft_2": 36,
+      "Draft_3": 39,
+      "Draft_4": 50,
+      "Draft_5": 54,
+      "Draft_6": 49
+    },
+    "Positive": {
+      "Draft_1": 14,
+      "Draft_2": 20,
+      "Draft_3": 17,
+      "Draft_4": 19,
+      "Draft_5": 10,
+      "Draft_6": 15
+    }
+  },
+  "sentiment_by_section": {
+    "Error": {
+      "Section 1": 0,
+      "Section 10": 0,
+      "Section 2": 0,
+      "Section 3": 0,
+      "Section 4": 0,
+      "Section 5": 0,
+      "Section 6": 0,
+      "Section 7": 0,
+      "Section 8": 0,
+      "Section 9": 1
+    },
+    "Mixed": {
+      "Section 1": 140,
+      "Section 10": 127,
+      "Section 2": 149,
+      "Section 3": 131,
+      "Section 4": 121,
+      "Section 5": 142,
+      "Section 6": 124,
+      "Section 7": 141,
+      "Section 8": 136,
+      "Section 9": 135
+    },
+    "Negative": {
+      "Section 1": 20,
+      "Section 10": 29,
+      "Section 2": 30,
+      "Section 3": 33,
+      "Section 4": 26,
+      "Section 5": 29,
+      "Section 6": 21,
+      "Section 7": 25,
+      "Section 8": 34,
+      "Section 9": 35
+    },
+    "Neutral": {
+      "Section 1": 29,
+      "Section 10": 37,
+      "Section 2": 23,
+      "Section 3": 33,
+      "Section 4": 24,
+      "Section 5": 28,
+      "Section 6": 15,
+      "Section 7": 27,
+      "Section 8": 32,
+      "Section 9": 28
+    },
+    "Positive": {
+      "Section 1": 13,
+      "Section 10": 8,
+      "Section 2": 10,
+      "Section 3": 7,
+      "Section 4": 9,
+      "Section 5": 7,
+      "Section 6": 9,
+      "Section 7": 11,
+      "Section 8": 11,
+      "Section 9": 10
+    }
+  },
+  "total_comments": 2000,
+  "successful_predictions": 1999,
+  "failed_predictions": 1,
+  "success_rate": 99.95
+}
