@@ -1,0 +1,8 @@
+{
+  "processed_count": 10,
+  "total_comments": 2000,
+  "timestamp": "20250905_221255",
+  "model_type": "huggingface",
+  "model_name": "cardiffnlp/twitter-roberta-base-sentiment-latest",
+  "checkpoint_file": "sentiment_checkpoint_10_20250905_221255.csv"
+}
